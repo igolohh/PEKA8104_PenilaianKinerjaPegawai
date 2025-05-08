@@ -5,7 +5,7 @@ import SearchFilter from './SearchFilter';
 import Summary from './Summary';
 import { WorkEntry, WorkEntryFormData } from '../types';
 import { supabase } from '../lib/supabase';
-import { BarChart as BarChartIcon, ThumbsUp, XCircle, Clock } from 'lucide-react';
+import { BarChart as BarChartIcon, ThumbsUp, XCircle, Clock, Loader2 } from 'lucide-react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -42,6 +42,7 @@ const Dashboard: React.FC<DashboardProps> = () => {
   const [dateFilter, setDateFilter] = useState('');
   const [editingEntry, setEditingEntry] = useState<WorkEntry | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     pending: 0,
     approved: 0,
@@ -52,8 +53,18 @@ const Dashboard: React.FC<DashboardProps> = () => {
 
   useEffect(() => {
     checkUserRole();
-    fetchEntries();
-    
+  }, []);
+
+  useEffect(() => {
+    if (userRole === 'pegawai') {
+      fetchEntries();
+    } else if (userRole === 'kepala_satker') {
+      fetchKepalaStats();
+      fetchMonthlyDurations();
+    }
+  }, [userRole]);
+
+  useEffect(() => {
     // Subscribe to real-time changes
     const subscription = supabase
       .channel('work_entries_changes')
@@ -66,12 +77,13 @@ const Dashboard: React.FC<DashboardProps> = () => {
         },
         (payload) => {
           const updatedEntry = payload.new as WorkEntry;
-          setEntries(currentEntries => 
-            currentEntries.map(entry => 
-              entry.id === updatedEntry.id ? updatedEntry : entry
-            )
-          );
-          if (userRole === 'kepala_satker') {
+          if (userRole === 'pegawai') {
+            setEntries(currentEntries => 
+              currentEntries.map(entry => 
+                entry.id === updatedEntry.id ? updatedEntry : entry
+              )
+            );
+          } else if (userRole === 'kepala_satker') {
             fetchKepalaStats();
             fetchMonthlyDurations();
           }
@@ -82,7 +94,7 @@ const Dashboard: React.FC<DashboardProps> = () => {
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [userRole]);
 
   const checkUserRole = async () => {
     try {
@@ -97,13 +109,11 @@ const Dashboard: React.FC<DashboardProps> = () => {
 
       if (data) {
         setUserRole(data.role);
-        if (data.role === 'kepala_satker') {
-          fetchKepalaStats();
-          fetchMonthlyDurations();
-        }
       }
     } catch (error) {
       console.error('Error checking user role:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -204,24 +214,26 @@ const Dashboard: React.FC<DashboardProps> = () => {
   };
 
   useEffect(() => {
-    let result = [...entries];
+    if (userRole === 'pegawai') {
+      let result = [...entries];
 
-    if (searchTerm) {
-      result = result.filter(entry => 
-        entry.description.toLowerCase().includes(searchTerm.toLowerCase())
-      );
+      if (searchTerm) {
+        result = result.filter(entry => 
+          entry.description.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+      }
+
+      if (statusFilter) {
+        result = result.filter(entry => entry.status === statusFilter);
+      }
+
+      if (dateFilter) {
+        result = result.filter(entry => entry.date === dateFilter);
+      }
+
+      setFilteredEntries(result);
     }
-
-    if (statusFilter) {
-      result = result.filter(entry => entry.status === statusFilter);
-    }
-
-    if (dateFilter) {
-      result = result.filter(entry => entry.date === dateFilter);
-    }
-
-    setFilteredEntries(result);
-  }, [entries, searchTerm, statusFilter, dateFilter]);
+  }, [entries, searchTerm, statusFilter, dateFilter, userRole]);
 
   const handleUpdateEntry = async (formData: WorkEntryFormData) => {
     if (!editingEntry) return;
@@ -279,6 +291,14 @@ const Dashboard: React.FC<DashboardProps> = () => {
   const cancelEdit = () => {
     setEditingEntry(null);
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
+      </div>
+    );
+  }
 
   const KepalaStats = () => {
     const chartData = {
@@ -389,51 +409,51 @@ const Dashboard: React.FC<DashboardProps> = () => {
     );
   };
 
+  const PegawaiDashboard = () => (
+    <>
+      {editingEntry && (
+        <div className="mb-6">
+          <EntryForm 
+            onSubmit={handleUpdateEntry}
+            initialData={editingEntry}
+            isEditing={true}
+            onCancel={cancelEdit}
+          />
+        </div>
+      )}
+      
+      <Summary entries={entries} />
+      
+      <SearchFilter 
+        searchTerm={searchTerm}
+        onSearchChange={setSearchTerm}
+        statusFilter={statusFilter}
+        onStatusFilterChange={setStatusFilter}
+        dateFilter={dateFilter}
+        onDateFilterChange={setDateFilter}
+      />
+      
+      <h2 className="text-xl font-semibold text-gray-800 mb-4">
+        Daftar Uraian Pekerjaan
+        {filteredEntries.length > 0 && 
+          <span className="text-sm font-normal text-gray-500 ml-2">
+            ({filteredEntries.length} entri)
+          </span>
+        }
+      </h2>
+      
+      <EntryList 
+        entries={filteredEntries}
+        onEdit={handleEditEntry}
+        onDelete={handleDeleteEntry}
+      />
+    </>
+  );
+
   return (
     <div className="p-6">
       <div className="max-w-7xl mx-auto">
-        {userRole === 'kepala_satker' ? (
-          <KepalaStats />
-        ) : (
-          <>
-            {editingEntry && (
-              <div className="mb-6">
-                <EntryForm 
-                  onSubmit={handleUpdateEntry}
-                  initialData={editingEntry}
-                  isEditing={true}
-                  onCancel={cancelEdit}
-                />
-              </div>
-            )}
-            
-            <Summary entries={entries} />
-            
-            <SearchFilter 
-              searchTerm={searchTerm}
-              onSearchChange={setSearchTerm}
-              statusFilter={statusFilter}
-              onStatusFilterChange={setStatusFilter}
-              dateFilter={dateFilter}
-              onDateFilterChange={setDateFilter}
-            />
-            
-            <h2 className="text-xl font-semibold text-gray-800 mb-4">
-              Daftar Uraian Pekerjaan
-              {filteredEntries.length > 0 && 
-                <span className="text-sm font-normal text-gray-500 ml-2">
-                  ({filteredEntries.length} entri)
-                </span>
-              }
-            </h2>
-            
-            <EntryList 
-              entries={filteredEntries}
-              onEdit={handleEditEntry}
-              onDelete={handleDeleteEntry}
-            />
-          </>
-        )}
+        {userRole === 'kepala_satker' ? <KepalaStats /> : <PegawaiDashboard />}
       </div>
     </div>
   );
